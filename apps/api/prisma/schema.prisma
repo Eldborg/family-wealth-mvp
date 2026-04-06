@@ -1,0 +1,89 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  password  String
+  name      String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  familyMembers FamilyMember[]
+  createdGroups FamilyGroup[] @relation("CreatedBy")
+
+  @@map("users")
+}
+
+model FamilyGroup {
+  id        String     @id @default(cuid())
+  name      String
+  createdById String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  createdBy User       @relation("CreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  members   FamilyMember[]
+  goals     Goal[]
+
+  @@map("family_groups")
+}
+
+model FamilyMember {
+  id            String     @id @default(cuid())
+  familyGroupId String
+  userId        String
+  role          String     @default("member") // owner or member
+  joinedAt      DateTime   @default(now())
+
+  // Relations
+  familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([familyGroupId, userId])
+  @@map("family_members")
+}
+
+model Goal {
+  id            String     @id @default(cuid())
+  familyGroupId String
+  title         String
+  targetAmount  Float
+  deadline      DateTime
+  category      String     // savings, education, home, etc.
+  progress      Float      @default(0)
+  status        String     @default("active") // active, completed, paused
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  // Relations
+  familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@map("goals")
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  goalId      String
+  amount      Float
+  description String?
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  // Relations
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@map("transactions")
+}
