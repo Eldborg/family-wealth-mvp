@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import ProtectedRoute from '@/app/components/ProtectedRoute';
 import { useAuth } from '@/app/contexts/AuthContext';
 
@@ -48,13 +49,15 @@ function DashboardContent() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-blue-50 rounded-lg border border-blue-200 p-6">
-          <h3 className="text-lg font-semibold mb-2">Family Goals</h3>
-          <p className="text-gray-600 mb-4">Create and manage shared financial goals for your family.</p>
-          <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
-            View Goals
-          </button>
-        </div>
+        <Link href="/goals">
+          <div className="bg-blue-50 rounded-lg border border-blue-200 p-6 hover:shadow-md transition-shadow cursor-pointer">
+            <h3 className="text-lg font-semibold mb-2">Family Goals</h3>
+            <p className="text-gray-600 mb-4">Create and manage shared financial goals for your family.</p>
+            <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+              View Goals
+            </button>
+          </div>
+        </Link>
 
         <div className="bg-green-50 rounded-lg border border-green-200 p-6">
           <h3 className="text-lg font-semibold mb-2">Transactions</h3>

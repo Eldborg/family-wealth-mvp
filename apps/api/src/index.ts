@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import authRouter from './routes/auth';
+import goalsRouter from './routes/goals';
 import { handleAuthError } from './middleware/auth';
 
 const app = express();
@@ -24,6 +25,9 @@ app.get('/api', (_req, res) => {
 
 // Auth routes
 app.use('/api/auth', authRouter);
+
+// Goals routes
+app.use('/api/goals', goalsRouter);
 
 // Auth error handling middleware
 app.use(handleAuthError);
