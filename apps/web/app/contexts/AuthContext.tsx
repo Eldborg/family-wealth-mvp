@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 
 export interface User {
   id: string;
@@ -27,8 +27,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const refreshingRef = useRef(false);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+  // Auto-refresh token on 401 response
+  const refreshAccessToken = async (): Promise<boolean> => {
+    if (refreshingRef.current) return false;
+
+    try {
+      refreshingRef.current = true;
+      const response = await fetch(`${API_URL}/api/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      return response.ok;
+    } catch (err) {
+      console.error('Token refresh failed:', err);
+      return false;
+    } finally {
+      refreshingRef.current = false;
+    }
+  };
+
+  // Fetch wrapper with auto-refresh on 401
+  const fetchWithRefresh = async (
+    url: string,
+    options: RequestInit = {}
+  ): Promise<Response> => {
+    let response = await fetch(url, { ...options, credentials: 'include' });
+
+    if (response.status === 401) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        response = await fetch(url, { ...options, credentials: 'include' });
+      }
+    }
+
+    return response;
+  };
 
   // Check if user is already logged in on mount
   useEffect(() => {
@@ -54,10 +91,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (email: string, password: string, name: string) => {
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/auth/register`, {
+      const response = await fetchWithRefresh(`${API_URL}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ email, password, name }),
       });
 
@@ -78,10 +114,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/api/auth/login`, {
+      const response = await fetchWithRefresh(`${API_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ email, password }),
       });
 
@@ -102,9 +137,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     setError(null);
     try {
-      await fetch(`${API_URL}/api/auth/logout`, {
+      await fetchWithRefresh(`${API_URL}/api/auth/logout`, {
         method: 'POST',
-        credentials: 'include',
       });
       setUser(null);
     } catch (err) {

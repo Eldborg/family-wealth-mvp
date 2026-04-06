@@ -2,6 +2,7 @@
   "name": "family-wealth-mvp",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@10.0.0",
   "description": "Family Wealth MVP - Collaborative financial goal tracking for families",
   "scripts": {
     "dev": "turbo run dev --parallel",
