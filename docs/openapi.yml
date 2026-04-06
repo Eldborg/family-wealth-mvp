@@ -1,0 +1,350 @@
+openapi: 3.0.0
+info:
+  title: Family Wealth MVP API
+  description: Collaborative financial goal tracking API for families
+  version: 0.1.0
+  contact:
+    name: Family Wealth Team
+    email: support@familywealth.local
+
+servers:
+  - url: http://localhost:3001
+    description: Development server
+  - url: https://api.familywealth.app
+    description: Production server
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /api/auth/register:
+    post:
+      summary: Register a new user
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+                name:
+                  type: string
+              required:
+                - email
+                - password
+                - name
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid input
+        '409':
+          description: Email already exists
+
+  /api/auth/login:
+    post:
+      summary: Login user
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+              required:
+                - email
+                - password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                  token:
+                    type: string
+        '401':
+          description: Invalid credentials
+
+  /api/family-groups:
+    get:
+      summary: List user's family groups
+      tags:
+        - Family Groups
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of family groups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FamilyGroup'
+                  total:
+                    type: integer
+        '401':
+          description: Unauthorized
+
+    post:
+      summary: Create a new family group
+      tags:
+        - Family Groups
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required:
+                - name
+      responses:
+        '201':
+          description: Family group created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FamilyGroup'
+        '401':
+          description: Unauthorized
+
+  /api/family-groups/{id}:
+    get:
+      summary: Get family group details
+      tags:
+        - Family Groups
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Family group details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FamilyGroup'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Family group not found
+
+  /api/goals:
+    get:
+      summary: List goals for a family group
+      tags:
+        - Goals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: familyGroupId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of goals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Goal'
+                  total:
+                    type: integer
+
+    post:
+      summary: Create a new goal
+      tags:
+        - Goals
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                familyGroupId:
+                  type: string
+                title:
+                  type: string
+                targetAmount:
+                  type: number
+                deadline:
+                  type: string
+                  format: date-time
+                category:
+                  type: string
+              required:
+                - familyGroupId
+                - title
+                - targetAmount
+                - deadline
+      responses:
+        '201':
+          description: Goal created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Goal'
+
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    FamilyGroup:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        createdById:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/FamilyMember'
+
+    FamilyMember:
+      type: object
+      properties:
+        id:
+          type: string
+        familyGroupId:
+          type: string
+        userId:
+          type: string
+        role:
+          type: string
+          enum:
+            - owner
+            - member
+        joinedAt:
+          type: string
+          format: date-time
+
+    Goal:
+      type: object
+      properties:
+        id:
+          type: string
+        familyGroupId:
+          type: string
+        title:
+          type: string
+        targetAmount:
+          type: number
+        deadline:
+          type: string
+          format: date-time
+        category:
+          type: string
+        progress:
+          type: number
+        status:
+          type: string
+          enum:
+            - active
+            - completed
+            - paused
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+tags:
+  - name: Health
+    description: Server health checks
+  - name: Authentication
+    description: User authentication endpoints
+  - name: Family Groups
+    description: Family group management
+  - name: Goals
+    description: Goal management
