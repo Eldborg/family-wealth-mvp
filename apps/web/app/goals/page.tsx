@@ -5,6 +5,8 @@ import Link from 'next/link';
 import ProtectedRoute from '@/app/components/ProtectedRoute';
 import GoalCard from '@/app/components/GoalCard';
 import GoalForm from '@/app/components/GoalForm';
+import FeedbackForm from '@/app/components/FeedbackForm';
+import { analytics } from '@/app/lib/analytics';
 
 interface Goal {
   id: string;
@@ -23,6 +25,7 @@ function GoalsContent() {
   const [showForm, setShowForm] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
   const [familyGroupId, setFamilyGroupId] = useState('');
+  const [showFeedback, setShowFeedback] = useState(false);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -41,8 +44,11 @@ function GoalsContent() {
         const data = await response.json();
         setFamilyGroupId(data.familyGroupId);
         setGoals(data.goals);
+        analytics.trackPageView('/goals', { goalCount: data.goals.length });
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load goals');
+        const errorMsg = err instanceof Error ? err.message : 'Failed to load goals';
+        setError(errorMsg);
+        analytics.trackError(errorMsg, { context: 'fetchGoals' });
       } finally {
         setLoading(false);
       }
@@ -74,8 +80,14 @@ function GoalsContent() {
       const data = await response.json();
       setGoals((prev) => [...prev, data.goal]);
       setShowForm(false);
+      analytics.trackFeatureUsage('goal_created', {
+        category: formData.category,
+        targetAmount: formData.targetAmount,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create goal');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to create goal';
+      setError(errorMsg);
+      analytics.trackError(errorMsg, { context: 'createGoal' });
       throw err;
     } finally {
       setFormLoading(false);
@@ -105,24 +117,38 @@ function GoalsContent() {
         </div>
       )}
 
-      {!showForm ? (
-        <button
-          onClick={() => setShowForm(true)}
-          className="mb-8 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
-        >
-          Create New Goal
-        </button>
-      ) : (
-        <div className="mb-8">
-          <GoalForm onSubmit={handleCreateGoal} loading={formLoading} error={error} />
+      <div className="flex gap-4 mb-8">
+        {!showForm ? (
           <button
-            onClick={() => setShowForm(false)}
-            className="mt-4 text-gray-600 hover:text-gray-800"
+            onClick={() => {
+              setShowForm(true);
+              analytics.trackUserAction('clicked_create_goal');
+            }}
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
           >
-            Cancel
+            Create New Goal
           </button>
-        </div>
-      )}
+        ) : (
+          <div className="mb-8">
+            <GoalForm onSubmit={handleCreateGoal} loading={formLoading} error={error} />
+            <button
+              onClick={() => setShowForm(false)}
+              className="mt-4 text-gray-600 hover:text-gray-800"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+        <button
+          onClick={() => {
+            setShowFeedback(true);
+            analytics.trackUserAction('clicked_feedback_button');
+          }}
+          className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 h-fit"
+        >
+          Send Feedback
+        </button>
+      </div>
 
       {goals.length === 0 ? (
         <div className="text-center py-12 bg-gray-50 rounded-lg">
@@ -150,6 +176,8 @@ function GoalsContent() {
           ))}
         </div>
       )}
+
+      {showFeedback && <FeedbackForm onClose={() => setShowFeedback(false)} />}
     </div>
   );
 }

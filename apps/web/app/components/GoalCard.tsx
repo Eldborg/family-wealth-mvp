@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { analytics } from '@/app/lib/analytics';
 
 interface GoalCardProps {
   id: string;
@@ -26,7 +27,16 @@ export default function GoalCard({ id, title, targetAmount, progressPercentage, 
   };
 
   return (
-    <Link href={`/goals/${id}`}>
+    <Link
+      href={`/goals/${id}`}
+      onClick={() => {
+        analytics.trackUserAction('viewed_goal_detail', {
+          goalId: id,
+          onTrack,
+          progressPercentage,
+        });
+      }}
+    >
       <div className={`rounded-lg border-2 p-4 cursor-pointer hover:shadow-md transition-shadow ${getStatusColor()}`}>
         <div className="flex justify-between items-start mb-2">
           <div>

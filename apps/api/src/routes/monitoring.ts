@@ -58,7 +58,7 @@ router.post('/feedback', authenticateToken, async (req: AuthRequest, res: Respon
 });
 
 // Get metrics (admin only for now)
-router.get('/metrics', authenticateToken, async (req: AuthRequest, res: Response) => {
+router.get('/metrics', authenticateToken, async (_req: AuthRequest, res: Response) => {
   try {
     const metrics = telemetryService.getMetrics();
     res.json({
