@@ -11,6 +11,7 @@ import {
   formatValidationErrors,
 } from '../utils/validation';
 import { setAuthCookies, clearAuthCookies } from '../utils/cookies';
+import { authRateLimit } from '../middleware/rateLimit';
 import { PrismaClient } from '@prisma/client';
 
 const router = Router();
@@ -20,7 +21,7 @@ const prisma = new PrismaClient();
  * POST /api/auth/register
  * Register a new user with email and password
  */
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', authRateLimit(), async (req: Request, res: Response) => {
   try {
     const { email, password, name } = req.body;
 
@@ -91,7 +92,7 @@ router.post('/register', async (req: Request, res: Response) => {
  * POST /api/auth/login
  * Login user with email and password
  */
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', authRateLimit(), async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 

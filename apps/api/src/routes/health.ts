@@ -22,9 +22,9 @@ interface HealthCheck {
 const startTime = Date.now();
 
 router.get('/', async (_, res: Response<HealthCheck>) => {
-  const checks = {
-    api: 'ok' as const,
-    database: 'ok' as const,
+  const checks: HealthCheck['checks'] = {
+    api: 'ok',
+    database: 'ok',
     memory: {
       used: 0,
       total: 0,
@@ -39,7 +39,7 @@ router.get('/', async (_, res: Response<HealthCheck>) => {
     await prisma.$queryRaw`SELECT 1`;
   } catch (error) {
     checks.database = 'error';
-    status = 'error';
+    status = 'degraded';
   }
 
   // Check memory
@@ -50,13 +50,14 @@ router.get('/', async (_, res: Response<HealthCheck>) => {
     percentage: Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100),
   };
 
-  if (checks.memory.percentage > 90) {
+  if (checks.memory.percentage > 90 && status === 'ok') {
     status = 'degraded';
   }
 
   const uptime = Math.floor((Date.now() - startTime) / 1000);
+  const statusCode = status === 'ok' ? 200 : status === 'degraded' ? 503 : 503;
 
-  res.status(status === 'error' ? 503 : 200).json({
+  res.status(statusCode).json({
     status,
     timestamp: new Date().toISOString(),
     uptime,
