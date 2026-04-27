@@ -101,7 +101,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const goal = await goalService.createGoal({
+    const created = await goalService.createGoal({
       familyGroupId,
       title,
       targetAmount,
@@ -109,11 +109,15 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       category,
     });
 
+    // Fetch back as GoalWithProgress so the response includes computed fields
+    // (progressPercentage, daysRemaining, onTrack) that the frontend GoalCard needs
+    const goal = await goalService.getGoal(created.id);
+
     telemetryService.trackEvent({
       eventName: 'goal_created',
       userId: req.user.userId,
       familyGroupId,
-      properties: { goalId: goal.id, category, targetAmount },
+      properties: { goalId: created.id, category, targetAmount },
     });
 
     res.status(201).json({

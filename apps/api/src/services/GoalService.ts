@@ -1,7 +1,5 @@
 import { PrismaClient, Goal, Transaction } from '@prisma/client';
 
-const prisma = new PrismaClient();
-
 export interface CreateGoalInput {
   familyGroupId: string;
   title: string;
@@ -26,8 +24,10 @@ export interface GoalWithProgress extends Goal {
 }
 
 export class GoalService {
+  constructor(private prisma: PrismaClient = new PrismaClient()) {}
+
   async createGoal(input: CreateGoalInput): Promise<Goal> {
-    return prisma.goal.create({
+    return this.prisma.goal.create({
       data: {
         familyGroupId: input.familyGroupId,
         title: input.title,
@@ -39,7 +39,7 @@ export class GoalService {
   }
 
   async getGoal(goalId: string): Promise<GoalWithProgress | null> {
-    const goal = await prisma.goal.findUnique({
+    const goal = await this.prisma.goal.findUnique({
       where: { id: goalId },
       include: { transactions: true },
     });
@@ -61,7 +61,7 @@ export class GoalService {
   }
 
   async getGoalsByFamily(familyGroupId: string): Promise<GoalWithProgress[]> {
-    const goals = await prisma.goal.findMany({
+    const goals = await this.prisma.goal.findMany({
       where: { familyGroupId },
       include: { transactions: true },
       orderBy: { deadline: 'asc' },
@@ -84,20 +84,20 @@ export class GoalService {
   }
 
   async updateGoal(goalId: string, input: UpdateGoalInput): Promise<Goal> {
-    return prisma.goal.update({
+    return this.prisma.goal.update({
       where: { id: goalId },
       data: input,
     });
   }
 
   async deleteGoal(goalId: string): Promise<Goal> {
-    return prisma.goal.delete({
+    return this.prisma.goal.delete({
       where: { id: goalId },
     });
   }
 
   async addTransaction(goalId: string, amount: number, description?: string): Promise<Transaction> {
-    return prisma.transaction.create({
+    return this.prisma.transaction.create({
       data: {
         goalId,
         amount,
@@ -107,21 +107,21 @@ export class GoalService {
   }
 
   async getGoalTransactions(goalId: string): Promise<Transaction[]> {
-    return prisma.transaction.findMany({
+    return this.prisma.transaction.findMany({
       where: { goalId },
       orderBy: { date: 'desc' },
     });
   }
 
   async deleteTransaction(transactionId: string): Promise<Transaction> {
-    return prisma.transaction.delete({
+    return this.prisma.transaction.delete({
       where: { id: transactionId },
     });
   }
 
   async getOrCreateUserFamilyGroup(userId: string, userName: string): Promise<string> {
     // Check if user is already in a family group
-    const membership = await prisma.familyMember.findFirst({
+    const membership = await this.prisma.familyMember.findFirst({
       where: { userId },
       include: { familyGroup: true },
     });
@@ -131,7 +131,7 @@ export class GoalService {
     }
 
     // Create a new family group for the user
-    const familyGroup = await prisma.familyGroup.create({
+    const familyGroup = await this.prisma.familyGroup.create({
       data: {
         name: `${userName}'s Family`,
         createdById: userId,
