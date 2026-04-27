@@ -1,150 +1,133 @@
 import { Router, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
+import { goalService } from '../services/GoalService';
+import { telemetryService } from '../services/TelemetryService';
 
 const router = Router();
-const prisma = new PrismaClient();
 
-// Middleware to verify family membership
-async function verifyFamilyMembership(
-  userId: string,
-  familyGroupId: string
-): Promise<boolean> {
-  const member = await prisma.familyMember.findUnique({
-    where: {
-      familyGroupId_userId: {
-        familyGroupId,
-        userId,
-      },
-    },
-  });
-  return !!member;
-}
-
-/**
- * GET /api/goals?familyGroupId={id}
- * Get all goals for a family group
- */
+// Get or create user's family group and list goals
 router.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { familyGroupId } = req.query;
-
-    if (!familyGroupId || typeof familyGroupId !== 'string') {
-      res.status(400).json({
-        success: false,
-        error: 'familyGroupId is required',
-      });
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'User not authenticated' });
       return;
     }
 
-    // Verify user is a member of this family group
-    const isMember = await verifyFamilyMembership(req.user?.userId!, familyGroupId);
-    if (!isMember) {
-      res.status(403).json({
-        success: false,
-        error: 'You do not have access to this family group',
-      });
-      return;
-    }
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
 
-    const goals = await prisma.goal.findMany({
-      where: { familyGroupId },
-      include: {
-        transactions: {
-          orderBy: { date: 'desc' },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
     });
 
-    // Calculate progress percentage for each goal
-    const goalsWithProgress = goals.map((goal) => ({
-      ...goal,
-      progressPercentage: goal.targetAmount > 0 ? (goal.progress / goal.targetAmount) * 100 : 0,
-      transactionCount: goal.transactions.length,
-    }));
+    if (!user) {
+      res.status(404).json({ success: false, error: 'User not found' });
+      return;
+    }
+
+    const familyGroupId = await goalService.getOrCreateUserFamilyGroup(req.user.userId, user.name);
+    const goals = await goalService.getGoalsByFamily(familyGroupId);
+
+    telemetryService.trackEvent({
+      eventName: 'goals_listed',
+      userId: req.user.userId,
+      familyGroupId,
+      properties: { goalCount: goals.length },
+    });
 
     res.json({
       success: true,
-      goals: goalsWithProgress,
+      familyGroupId,
+      goals,
     });
   } catch (error) {
-    console.error('Error fetching goals:', error);
+    console.error('Get goals error:', error);
+    telemetryService.trackEvent({
+      eventName: 'get_goals_error',
+      userId: req.user?.userId,
+      properties: { error: String(error) },
+      severity: 'error',
+    });
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch goals',
+      error: 'Failed to get goals',
     });
   }
 });
 
-/**
- * POST /api/goals
- * Create a new goal
- */
+// Create a new goal
 router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'User not authenticated' });
+      return;
+    }
+
     const { familyGroupId, title, targetAmount, deadline, category } = req.body;
 
-    // Validate required fields
-    if (!familyGroupId || !title || !targetAmount || !deadline || !category) {
+    if (!title || !targetAmount || !deadline || !category) {
       res.status(400).json({
         success: false,
-        error: 'Missing required fields: familyGroupId, title, targetAmount, deadline, category',
+        error: 'Missing required fields',
       });
       return;
     }
 
-    // Verify user is a member of this family group
-    const isMember = await verifyFamilyMembership(req.user?.userId!, familyGroupId);
-    if (!isMember) {
+    if (targetAmount <= 0) {
+      res.status(400).json({
+        success: false,
+        error: 'Target amount must be positive',
+      });
+      return;
+    }
+
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+
+    const membership = await prisma.familyMember.findUnique({
+      where: {
+        familyGroupId_userId: {
+          familyGroupId,
+          userId: req.user.userId,
+        },
+      },
+    });
+
+    if (!membership) {
       res.status(403).json({
         success: false,
-        error: 'You do not have access to this family group',
+        error: 'Not a member of this family group',
       });
       return;
     }
 
-    // Validate inputs
-    if (typeof targetAmount !== 'number' || targetAmount <= 0) {
-      res.status(400).json({
-        success: false,
-        error: 'targetAmount must be a positive number',
-      });
-      return;
-    }
+    const goal = await goalService.createGoal({
+      familyGroupId,
+      title,
+      targetAmount,
+      deadline: new Date(deadline),
+      category,
+    });
 
-    const deadlineDate = new Date(deadline);
-    if (isNaN(deadlineDate.getTime())) {
-      res.status(400).json({
-        success: false,
-        error: 'deadline must be a valid date',
-      });
-      return;
-    }
-
-    const goal = await prisma.goal.create({
-      data: {
-        familyGroupId,
-        title,
-        targetAmount,
-        deadline: deadlineDate,
-        category,
-        status: 'active',
-      },
-      include: {
-        transactions: true,
-      },
+    telemetryService.trackEvent({
+      eventName: 'goal_created',
+      userId: req.user.userId,
+      familyGroupId,
+      properties: { goalId: goal.id, category, targetAmount },
     });
 
     res.status(201).json({
       success: true,
-      goal: {
-        ...goal,
-        progressPercentage: (goal.progress / goal.targetAmount) * 100,
-      },
+      goal,
     });
   } catch (error) {
-    console.error('Error creating goal:', error);
+    console.error('Create goal error:', error);
+    telemetryService.trackEvent({
+      eventName: 'create_goal_error',
+      userId: req.user?.userId,
+      properties: { error: String(error) },
+      severity: 'error',
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to create goal',
@@ -152,140 +135,124 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   }
 });
 
-/**
- * GET /api/goals/{id}
- * Get a specific goal with transactions
- */
-router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
+// Get a specific goal
+router.get('/:goalId', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { id } = req.params;
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'User not authenticated' });
+      return;
+    }
 
-    const goal = await prisma.goal.findUnique({
-      where: { id },
-      include: {
-        transactions: {
-          orderBy: { date: 'desc' },
+    const goal = await goalService.getGoal(req.params.goalId);
+
+    if (!goal) {
+      res.status(404).json({ success: false, error: 'Goal not found' });
+      return;
+    }
+
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+
+    const membership = await prisma.familyMember.findUnique({
+      where: {
+        familyGroupId_userId: {
+          familyGroupId: goal.familyGroupId,
+          userId: req.user.userId,
         },
       },
     });
 
-    if (!goal) {
-      res.status(404).json({
-        success: false,
-        error: 'Goal not found',
-      });
-      return;
-    }
-
-    // Verify user is a member of this family group
-    const isMember = await verifyFamilyMembership(req.user?.userId!, goal.familyGroupId);
-    if (!isMember) {
+    if (!membership) {
       res.status(403).json({
         success: false,
-        error: 'You do not have access to this goal',
+        error: 'No access to this goal',
       });
       return;
     }
 
     res.json({
       success: true,
-      goal: {
-        ...goal,
-        progressPercentage: goal.targetAmount > 0 ? (goal.progress / goal.targetAmount) * 100 : 0,
-      },
+      goal,
     });
   } catch (error) {
-    console.error('Error fetching goal:', error);
+    console.error('Get goal error:', error);
+    telemetryService.trackEvent({
+      eventName: 'get_goal_error',
+      userId: req.user?.userId,
+      properties: { goalId: req.params.goalId, error: String(error) },
+      severity: 'error',
+    });
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch goal',
+      error: 'Failed to get goal',
     });
   }
 });
 
-/**
- * PATCH /api/goals/{id}
- * Update a goal
- */
-router.patch('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
+// Update a goal
+router.patch('/:goalId', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { id } = req.params;
-    const { title, targetAmount, deadline, category, status } = req.body;
-
-    const goal = await prisma.goal.findUnique({
-      where: { id },
-    });
-
-    if (!goal) {
-      res.status(404).json({
-        success: false,
-        error: 'Goal not found',
-      });
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'User not authenticated' });
       return;
     }
 
-    // Verify user is a member of this family group
-    const isMember = await verifyFamilyMembership(req.user?.userId!, goal.familyGroupId);
-    if (!isMember) {
+    const { title, targetAmount, deadline, category, status } = req.body;
+    const currentGoal = await goalService.getGoal(req.params.goalId);
+
+    if (!currentGoal) {
+      res.status(404).json({ success: false, error: 'Goal not found' });
+      return;
+    }
+
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+
+    const membership = await prisma.familyMember.findUnique({
+      where: {
+        familyGroupId_userId: {
+          familyGroupId: currentGoal.familyGroupId,
+          userId: req.user.userId,
+        },
+      },
+    });
+
+    if (!membership) {
       res.status(403).json({
         success: false,
-        error: 'You do not have access to this goal',
+        error: 'No access to this goal',
       });
       return;
     }
 
     const updateData: any = {};
-    if (title !== undefined) updateData.title = title;
-    if (targetAmount !== undefined) {
-      if (typeof targetAmount !== 'number' || targetAmount <= 0) {
-        res.status(400).json({
-          success: false,
-          error: 'targetAmount must be a positive number',
-        });
-        return;
-      }
-      updateData.targetAmount = targetAmount;
-    }
-    if (deadline !== undefined) {
-      const deadlineDate = new Date(deadline);
-      if (isNaN(deadlineDate.getTime())) {
-        res.status(400).json({
-          success: false,
-          error: 'deadline must be a valid date',
-        });
-        return;
-      }
-      updateData.deadline = deadlineDate;
-    }
-    if (category !== undefined) updateData.category = category;
-    if (status !== undefined) {
-      if (!['active', 'completed', 'paused'].includes(status)) {
-        res.status(400).json({
-          success: false,
-          error: 'status must be one of: active, completed, paused',
-        });
-        return;
-      }
-      updateData.status = status;
-    }
+    if (title) updateData.title = title;
+    if (targetAmount) updateData.targetAmount = targetAmount;
+    if (deadline) updateData.deadline = new Date(deadline);
+    if (category) updateData.category = category;
+    if (status) updateData.status = status;
 
-    const updatedGoal = await prisma.goal.update({
-      where: { id },
-      data: updateData,
-      include: {
-        transactions: true,
-      },
+    const goal = await goalService.updateGoal(req.params.goalId, updateData);
+
+    telemetryService.trackEvent({
+      eventName: 'goal_updated',
+      userId: req.user.userId,
+      familyGroupId: currentGoal.familyGroupId,
+      properties: { goalId: req.params.goalId, fields: Object.keys(updateData) },
     });
 
     res.json({
       success: true,
-      goal: {
-        ...updatedGoal,
-        progressPercentage: updatedGoal.targetAmount > 0 ? (updatedGoal.progress / updatedGoal.targetAmount) * 100 : 0,
-      },
+      goal,
     });
   } catch (error) {
-    console.error('Error updating goal:', error);
+    console.error('Update goal error:', error);
+    telemetryService.trackEvent({
+      eventName: 'update_goal_error',
+      userId: req.user?.userId,
+      properties: { goalId: req.params.goalId, error: String(error) },
+      severity: 'error',
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to update goal',
@@ -293,46 +260,62 @@ router.patch('/:id', authenticateToken, async (req: AuthRequest, res: Response) 
   }
 });
 
-/**
- * DELETE /api/goals/{id}
- * Delete a goal
- */
-router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
+// Delete a goal
+router.delete('/:goalId', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { id } = req.params;
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'User not authenticated' });
+      return;
+    }
 
-    const goal = await prisma.goal.findUnique({
-      where: { id },
+    const currentGoal = await goalService.getGoal(req.params.goalId);
+
+    if (!currentGoal) {
+      res.status(404).json({ success: false, error: 'Goal not found' });
+      return;
+    }
+
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+
+    const membership = await prisma.familyMember.findUnique({
+      where: {
+        familyGroupId_userId: {
+          familyGroupId: currentGoal.familyGroupId,
+          userId: req.user.userId,
+        },
+      },
     });
 
-    if (!goal) {
-      res.status(404).json({
-        success: false,
-        error: 'Goal not found',
-      });
-      return;
-    }
-
-    // Verify user is a member of this family group
-    const isMember = await verifyFamilyMembership(req.user?.userId!, goal.familyGroupId);
-    if (!isMember) {
+    if (!membership) {
       res.status(403).json({
         success: false,
-        error: 'You do not have access to this goal',
+        error: 'No access to this goal',
       });
       return;
     }
 
-    await prisma.goal.delete({
-      where: { id },
+    await goalService.deleteGoal(req.params.goalId);
+
+    telemetryService.trackEvent({
+      eventName: 'goal_deleted',
+      userId: req.user.userId,
+      familyGroupId: currentGoal.familyGroupId,
+      properties: { goalId: req.params.goalId },
     });
 
     res.json({
       success: true,
-      message: 'Goal deleted successfully',
+      message: 'Goal deleted',
     });
   } catch (error) {
-    console.error('Error deleting goal:', error);
+    console.error('Delete goal error:', error);
+    telemetryService.trackEvent({
+      eventName: 'delete_goal_error',
+      userId: req.user?.userId,
+      properties: { goalId: req.params.goalId, error: String(error) },
+      severity: 'error',
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to delete goal',
@@ -340,86 +323,72 @@ router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response)
   }
 });
 
-/**
- * POST /api/goals/{id}/transactions
- * Add a transaction to a goal (track progress)
- */
+// Add transaction to goal
 router.post('/:goalId/transactions', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { goalId } = req.params;
-    const { amount, description, date } = req.body;
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'User not authenticated' });
+      return;
+    }
 
-    if (!amount || typeof amount !== 'number' || amount <= 0) {
+    const { amount, description } = req.body;
+
+    if (!amount || amount <= 0) {
       res.status(400).json({
         success: false,
-        error: 'amount must be a positive number',
+        error: 'Amount must be positive',
       });
       return;
     }
 
-    const goal = await prisma.goal.findUnique({
-      where: { id: goalId },
-    });
+    const goal = await goalService.getGoal(req.params.goalId);
 
     if (!goal) {
-      res.status(404).json({
-        success: false,
-        error: 'Goal not found',
-      });
+      res.status(404).json({ success: false, error: 'Goal not found' });
       return;
     }
 
-    // Verify user is a member of this family group
-    const isMember = await verifyFamilyMembership(req.user?.userId!, goal.familyGroupId);
-    if (!isMember) {
-      res.status(403).json({
-        success: false,
-        error: 'You do not have access to this goal',
-      });
-      return;
-    }
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
 
-    const transactionDate = date ? new Date(date) : new Date();
-    if (isNaN(transactionDate.getTime())) {
-      res.status(400).json({
-        success: false,
-        error: 'date must be a valid date',
-      });
-      return;
-    }
-
-    const transaction = await prisma.transaction.create({
-      data: {
-        goalId,
-        amount,
-        description: description || '',
-        date: transactionDate,
+    const membership = await prisma.familyMember.findUnique({
+      where: {
+        familyGroupId_userId: {
+          familyGroupId: goal.familyGroupId,
+          userId: req.user.userId,
+        },
       },
     });
 
-    // Update goal progress
-    const updatedGoal = await prisma.goal.update({
-      where: { id: goalId },
-      data: {
-        progress: {
-          increment: amount,
-        },
-      },
-      include: {
-        transactions: true,
-      },
+    if (!membership) {
+      res.status(403).json({
+        success: false,
+        error: 'No access to this goal',
+      });
+      return;
+    }
+
+    const transaction = await goalService.addTransaction(req.params.goalId, amount, description);
+
+    telemetryService.trackEvent({
+      eventName: 'transaction_added',
+      userId: req.user.userId,
+      familyGroupId: goal.familyGroupId,
+      properties: { goalId: req.params.goalId, amount, transactionId: transaction.id },
     });
 
     res.status(201).json({
       success: true,
       transaction,
-      goal: {
-        ...updatedGoal,
-        progressPercentage: updatedGoal.targetAmount > 0 ? (updatedGoal.progress / updatedGoal.targetAmount) * 100 : 0,
-      },
     });
   } catch (error) {
-    console.error('Error creating transaction:', error);
+    console.error('Add transaction error:', error);
+    telemetryService.trackEvent({
+      eventName: 'add_transaction_error',
+      userId: req.user?.userId,
+      properties: { goalId: req.params.goalId, error: String(error) },
+      severity: 'error',
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to add transaction',
@@ -427,113 +396,118 @@ router.post('/:goalId/transactions', authenticateToken, async (req: AuthRequest,
   }
 });
 
-/**
- * GET /api/goals/{id}/transactions
- * Get all transactions for a goal
- */
+// Get transactions for a goal
 router.get('/:goalId/transactions', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { goalId } = req.params;
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'User not authenticated' });
+      return;
+    }
 
-    const goal = await prisma.goal.findUnique({
-      where: { id: goalId },
-    });
+    const goal = await goalService.getGoal(req.params.goalId);
 
     if (!goal) {
-      res.status(404).json({
-        success: false,
-        error: 'Goal not found',
-      });
+      res.status(404).json({ success: false, error: 'Goal not found' });
       return;
     }
 
-    // Verify user is a member of this family group
-    const isMember = await verifyFamilyMembership(req.user?.userId!, goal.familyGroupId);
-    if (!isMember) {
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+
+    const membership = await prisma.familyMember.findUnique({
+      where: {
+        familyGroupId_userId: {
+          familyGroupId: goal.familyGroupId,
+          userId: req.user.userId,
+        },
+      },
+    });
+
+    if (!membership) {
       res.status(403).json({
         success: false,
-        error: 'You do not have access to this goal',
+        error: 'No access to this goal',
       });
       return;
     }
 
-    const transactions = await prisma.transaction.findMany({
-      where: { goalId },
-      orderBy: { date: 'desc' },
-    });
+    const transactions = await goalService.getGoalTransactions(req.params.goalId);
 
     res.json({
       success: true,
       transactions,
     });
   } catch (error) {
-    console.error('Error fetching transactions:', error);
+    console.error('Get transactions error:', error);
+    telemetryService.trackEvent({
+      eventName: 'get_transactions_error',
+      userId: req.user?.userId,
+      properties: { goalId: req.params.goalId, error: String(error) },
+      severity: 'error',
+    });
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch transactions',
+      error: 'Failed to get transactions',
     });
   }
 });
 
-/**
- * DELETE /api/goals/{id}/transactions/{txId}
- * Delete a transaction
- */
-router.delete('/:goalId/transactions/:txId', authenticateToken, async (req: AuthRequest, res: Response) => {
+// Delete a transaction
+router.delete('/:goalId/transactions/:transactionId', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { goalId, txId } = req.params;
-
-    const transaction = await prisma.transaction.findUnique({
-      where: { id: txId },
-      include: { goal: true },
-    });
-
-    if (!transaction) {
-      res.status(404).json({
-        success: false,
-        error: 'Transaction not found',
-      });
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'User not authenticated' });
       return;
     }
 
-    if (transaction.goal.id !== goalId) {
-      res.status(400).json({
-        success: false,
-        error: 'Transaction does not belong to this goal',
-      });
+    const goal = await goalService.getGoal(req.params.goalId);
+
+    if (!goal) {
+      res.status(404).json({ success: false, error: 'Goal not found' });
       return;
     }
 
-    // Verify user is a member of this family group
-    const isMember = await verifyFamilyMembership(req.user?.userId!, transaction.goal.familyGroupId);
-    if (!isMember) {
-      res.status(403).json({
-        success: false,
-        error: 'You do not have access to this transaction',
-      });
-      return;
-    }
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
 
-    // Delete transaction and update goal progress
-    await prisma.transaction.delete({
-      where: { id: txId },
-    });
-
-    await prisma.goal.update({
-      where: { id: goalId },
-      data: {
-        progress: {
-          decrement: transaction.amount,
+    const membership = await prisma.familyMember.findUnique({
+      where: {
+        familyGroupId_userId: {
+          familyGroupId: goal.familyGroupId,
+          userId: req.user.userId,
         },
       },
     });
 
+    if (!membership) {
+      res.status(403).json({
+        success: false,
+        error: 'No access to this goal',
+      });
+      return;
+    }
+
+    await goalService.deleteTransaction(req.params.transactionId);
+
+    telemetryService.trackEvent({
+      eventName: 'transaction_deleted',
+      userId: req.user.userId,
+      familyGroupId: goal.familyGroupId,
+      properties: { goalId: req.params.goalId, transactionId: req.params.transactionId },
+    });
+
     res.json({
       success: true,
-      message: 'Transaction deleted successfully',
+      message: 'Transaction deleted',
     });
   } catch (error) {
-    console.error('Error deleting transaction:', error);
+    console.error('Delete transaction error:', error);
+    telemetryService.trackEvent({
+      eventName: 'delete_transaction_error',
+      userId: req.user?.userId,
+      properties: { goalId: req.params.goalId, transactionId: req.params.transactionId, error: String(error) },
+      severity: 'error',
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to delete transaction',

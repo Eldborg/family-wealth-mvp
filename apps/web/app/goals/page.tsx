@@ -1,125 +1,163 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/app/contexts/AuthContext';
-import { useGoals } from '@/app/contexts/GoalsContext';
+import Link from 'next/link';
 import ProtectedRoute from '@/app/components/ProtectedRoute';
 import GoalCard from '@/app/components/GoalCard';
 import GoalForm from '@/app/components/GoalForm';
 
-export default function GoalsPage() {
-  const { user } = useAuth();
-  const { goals, loading, error, fetchGoals, clearError } = useGoals();
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [familyGroupId] = useState(user?.id || ''); // In a real app, this would come from family group selection
+interface Goal {
+  id: string;
+  title: string;
+  targetAmount: number;
+  progressPercentage: number;
+  daysRemaining: number;
+  onTrack: boolean;
+  category: string;
+}
 
+function GoalsContent() {
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [formLoading, setFormLoading] = useState(false);
+  const [familyGroupId, setFamilyGroupId] = useState('');
+
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+  // Fetch goals on mount
   useEffect(() => {
-    if (familyGroupId) {
-      fetchGoals(familyGroupId);
-    }
-  }, [familyGroupId, fetchGoals]);
+    const fetchGoals = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/goals`, {
+          credentials: 'include',
+        });
 
-  const handleCreateSuccess = () => {
-    setShowCreateForm(false);
+        if (!response.ok) {
+          throw new Error('Failed to fetch goals');
+        }
+
+        const data = await response.json();
+        setFamilyGroupId(data.familyGroupId);
+        setGoals(data.goals);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load goals');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchGoals();
+  }, [API_URL]);
+
+  const handleCreateGoal = async (formData: { title: string; targetAmount: number; deadline: string; category: string }) => {
+    setFormLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(`${API_URL}/api/goals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          ...formData,
+          familyGroupId,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to create goal');
+      }
+
+      const data = await response.json();
+      setGoals((prev) => [...prev, data.goal]);
+      setShowForm(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create goal');
+      throw err;
+    } finally {
+      setFormLoading(false);
+    }
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-lg text-gray-600">Loading goals...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto">
+      <div className="flex justify-between items-center mb-8">
+        <h2 className="text-3xl font-bold">Family Wealth Goals</h2>
+        <Link href="/dashboard" className="text-blue-600 hover:text-blue-800">
+          ← Back to Dashboard
+        </Link>
+      </div>
+
+      {error && (
+        <div className="rounded-md bg-red-50 p-4 mb-6">
+          <div className="text-sm font-medium text-red-800">{error}</div>
+        </div>
+      )}
+
+      {!showForm ? (
+        <button
+          onClick={() => setShowForm(true)}
+          className="mb-8 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
+        >
+          Create New Goal
+        </button>
+      ) : (
+        <div className="mb-8">
+          <GoalForm onSubmit={handleCreateGoal} loading={formLoading} error={error} />
+          <button
+            onClick={() => setShowForm(false)}
+            className="mt-4 text-gray-600 hover:text-gray-800"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {goals.length === 0 ? (
+        <div className="text-center py-12 bg-gray-50 rounded-lg">
+          <p className="text-gray-600 mb-4">No goals yet. Create your first family wealth goal!</p>
+          <button
+            onClick={() => setShowForm(true)}
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
+          >
+            Create Goal
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {goals.map((goal) => (
+            <GoalCard
+              key={goal.id}
+              id={goal.id}
+              title={goal.title}
+              targetAmount={goal.targetAmount}
+              progressPercentage={goal.progressPercentage}
+              daysRemaining={goal.daysRemaining}
+              onTrack={goal.onTrack}
+              category={goal.category}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function GoalsPage() {
   return (
     <ProtectedRoute>
-      <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-6xl mx-auto">
-          {/* Header */}
-          <div className="flex justify-between items-center mb-8">
-            <div>
-              <h1 className="text-4xl font-bold text-gray-900">Family Goals</h1>
-              <p className="text-gray-600 mt-2">Track your family's financial goals together</p>
-            </div>
-            <button
-              onClick={() => setShowCreateForm(!showCreateForm)}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-medium transition"
-            >
-              {showCreateForm ? 'Cancel' : '+ New Goal'}
-            </button>
-          </div>
-
-          {/* Create Form */}
-          {showCreateForm && (
-            <div className="mb-8">
-              <GoalForm
-                familyGroupId={familyGroupId}
-                onSuccess={handleCreateSuccess}
-                onCancel={() => setShowCreateForm(false)}
-              />
-            </div>
-          )}
-
-          {/* Error Message */}
-          {error && (
-            <div className="mb-6 rounded-md bg-red-50 p-4">
-              <div className="flex justify-between items-center">
-                <div className="text-sm font-medium text-red-800">{error}</div>
-                <button
-                  onClick={clearError}
-                  className="text-red-600 hover:text-red-700 font-medium"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Loading State */}
-          {loading && (
-            <div className="text-center py-12">
-              <p className="text-gray-600">Loading your goals...</p>
-            </div>
-          )}
-
-          {/* Goals Grid */}
-          {!loading && goals.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {goals.map((goal) => (
-                <GoalCard
-                  key={goal.id}
-                  goal={goal}
-                  familyGroupId={familyGroupId}
-                />
-              ))}
-            </div>
-          ) : !loading ? (
-            <div className="text-center py-12">
-              <p className="text-gray-600 mb-4">No goals yet. Create one to get started!</p>
-              <button
-                onClick={() => setShowCreateForm(true)}
-                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-medium transition"
-              >
-                Create Your First Goal
-              </button>
-            </div>
-          ) : null}
-
-          {/* Stats */}
-          {!loading && goals.length > 0 && (
-            <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h3 className="text-gray-600 text-sm font-medium">Total Goals</h3>
-                <p className="text-3xl font-bold text-gray-900 mt-2">{goals.length}</p>
-              </div>
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h3 className="text-gray-600 text-sm font-medium">Active Goals</h3>
-                <p className="text-3xl font-bold text-gray-900 mt-2">
-                  {goals.filter((g) => g.status === 'active').length}
-                </p>
-              </div>
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h3 className="text-gray-600 text-sm font-medium">Total Target Amount</h3>
-                <p className="text-3xl font-bold text-gray-900 mt-2">
-                  ${goals.reduce((sum, g) => sum + g.targetAmount, 0).toFixed(0)}
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      <GoalsContent />
     </ProtectedRoute>
   );
 }
