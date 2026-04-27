@@ -6,6 +6,7 @@ import goalsRouter from './routes/goals';
 import monitoringRouter from './routes/monitoring';
 import { handleAuthError } from './middleware/auth';
 import { apiRateLimit, cleanupRateLimit } from './middleware/rateLimit';
+import { securityHeaders } from './middleware/security';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -14,6 +15,7 @@ const port = process.env.PORT || 3001;
 app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:3000', credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
+app.use(securityHeaders);
 
 // Rate limiting
 app.use(apiRateLimit()); // General API rate limiting
