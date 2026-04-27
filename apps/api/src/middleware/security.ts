@@ -4,7 +4,7 @@ import { Request, Response, NextFunction } from 'express';
  * Security headers middleware for production deployments
  * Adds HSTS, X-Content-Type-Options, X-Frame-Options, and X-XSS-Protection headers
  */
-export function securityHeaders(req: Request, res: Response, next: NextFunction) {
+export function securityHeaders(_req: Request, res: Response, next: NextFunction) {
   // Strict-Transport-Security: Force HTTPS for 1 year
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
 
