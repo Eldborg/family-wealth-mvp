@@ -1,0 +1,44 @@
+# Build stage
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+COPY apps/web/package*.json ./apps/web/
+COPY packages/shared-types/package*.json ./packages/shared-types/
+COPY packages/ui/package*.json ./packages/ui/
+
+RUN npm ci
+
+# Copy source
+COPY . .
+
+# Build
+RUN npm run build --workspace=web
+
+# Production stage
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install runtime dependencies only
+COPY package*.json ./
+COPY apps/web/package*.json ./apps/web/
+COPY packages/shared-types/ ./packages/shared-types/
+COPY packages/ui/ ./packages/ui/
+
+RUN npm ci --production
+
+# Copy built application
+COPY --from=builder /app/apps/web/.next ./.next
+COPY --from=builder /app/apps/web/public ./public
+COPY apps/web/next.config.js ./
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+
+EXPOSE 3000
+
+CMD ["npm", "start", "--workspace=web"]
