@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { authService, TokenPayload } from '../services/AuthService';
+import { tokenBlacklistService } from '../services/TokenBlacklistService';
 
 export interface AuthRequest extends Request {
   user?: TokenPayload;
@@ -22,6 +23,12 @@ export const authenticateToken = (
 
   if (!token) {
     res.status(401).json({ success: false, error: 'No token provided' });
+    return;
+  }
+
+  // Check if token is blacklisted
+  if (tokenBlacklistService.isBlacklisted(token)) {
+    res.status(401).json({ success: false, error: 'Token has been revoked' });
     return;
   }
 

@@ -2,6 +2,11 @@ import { Router, Response } from 'express';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { goalService } from '../services/GoalService';
 import { telemetryService } from '../services/TelemetryService';
+import {
+  validateCreateGoalInput,
+  validateTransactionInput,
+  formatValidationErrors,
+} from '../utils/validation';
 
 const router = Router();
 
@@ -65,18 +70,11 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     const { familyGroupId, title, targetAmount, deadline, category } = req.body;
 
-    if (!title || !targetAmount || !deadline || !category) {
+    const validationErrors = validateCreateGoalInput(title, targetAmount, deadline, category);
+    if (validationErrors.length > 0) {
       res.status(400).json({
         success: false,
-        error: 'Missing required fields',
-      });
-      return;
-    }
-
-    if (targetAmount <= 0) {
-      res.status(400).json({
-        success: false,
-        error: 'Target amount must be positive',
+        errors: formatValidationErrors(validationErrors),
       });
       return;
     }
@@ -337,10 +335,11 @@ router.post('/:goalId/transactions', authenticateToken, async (req: AuthRequest,
 
     const { amount, description } = req.body;
 
-    if (!amount || amount <= 0) {
+    const validationErrors = validateTransactionInput(amount, description);
+    if (validationErrors.length > 0) {
       res.status(400).json({
         success: false,
-        error: 'Amount must be positive',
+        errors: formatValidationErrors(validationErrors),
       });
       return;
     }

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authService } from '../services/AuthService';
+import { tokenBlacklistService } from '../services/TokenBlacklistService';
 import {
   authenticateToken,
   validateRefreshToken,
@@ -51,23 +52,32 @@ router.post('/register', authRateLimit(), async (req: Request, res: Response) =>
     // Hash password
     const hashedPassword = await authService.hashPassword(password);
 
+    // Generate email verification token
+    const verificationToken = authService.generateEmailVerificationToken();
+
     // Create user
     const user = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
         name,
+        emailVerificationToken: verificationToken,
+        emailVerificationSentAt: new Date(),
       },
     });
 
-    // Generate tokens
+    // Generate session tokens
     const tokens = authService.generateTokens(user.id, user.email);
 
     // Set cookies
     setAuthCookies(res, tokens.accessToken, tokens.refreshToken);
 
-    // Store refresh token in database (optional, for token revocation)
-    // await prisma.refreshToken.create({ ... });
+    // TODO: Send verification email with token
+    // const verificationLink = authService.getVerificationLink(
+    //   verificationToken,
+    //   process.env.FRONTEND_URL || 'http://localhost:3000'
+    // );
+    // await emailService.sendVerificationEmail(user.email, user.name, verificationLink);
 
     res.status(201).json({
       success: true,
@@ -75,9 +85,11 @@ router.post('/register', authRateLimit(), async (req: Request, res: Response) =>
         id: user.id,
         email: user.email,
         name: user.name,
+        emailVerified: false,
       },
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
+      message: 'Verification email sent (implementation pending)',
     });
   } catch (error) {
     console.error('Register error:', error);
@@ -253,10 +265,37 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
 
 /**
  * POST /api/auth/logout
- * Logout user and clear tokens
+ * Logout user and revoke tokens
  */
-router.post('/logout', (_req: Request, res: Response) => {
+router.post('/logout', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
+    // Get tokens from cookies or headers
+    const authHeader = req.headers['authorization'];
+    const accessToken =
+      authHeader && authHeader.startsWith('Bearer ')
+        ? authHeader.slice(7)
+        : req.cookies?.accessToken;
+
+    const refreshToken = req.cookies?.refreshToken;
+
+    // Add tokens to blacklist if they exist
+    if (accessToken) {
+      const decoded = authService.verifyAccessToken(accessToken);
+      if (decoded && decoded.exp) {
+        const expiresAt = new Date(decoded.exp * 1000);
+        tokenBlacklistService.addToBlacklist(accessToken, expiresAt);
+      }
+    }
+
+    if (refreshToken) {
+      const decoded = authService.verifyRefreshToken(refreshToken);
+      if (decoded && decoded.exp) {
+        const expiresAt = new Date(decoded.exp * 1000);
+        tokenBlacklistService.addToBlacklist(refreshToken, expiresAt);
+      }
+    }
+
+    // Clear cookies
     clearAuthCookies(res);
 
     res.json({
@@ -268,6 +307,75 @@ router.post('/logout', (_req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: 'Logout failed',
+    });
+  }
+});
+
+/**
+ * POST /api/auth/verify-email
+ * Verify email using verification token
+ */
+router.post('/verify-email', async (req: Request, res: Response) => {
+  try {
+    const { token } = req.body;
+
+    if (!token || typeof token !== 'string') {
+      res.status(400).json({
+        success: false,
+        error: 'Verification token is required',
+      });
+      return;
+    }
+
+    // Find user by verification token
+    const user = await prisma.user.findFirst({
+      where: { emailVerificationToken: token },
+    });
+
+    if (!user) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid or expired verification token',
+      });
+      return;
+    }
+
+    // Check if token is not too old (24 hours)
+    const tokenAge = Date.now() - (user.emailVerificationSentAt?.getTime() || 0);
+    const tokenMaxAge = 24 * 60 * 60 * 1000; // 24 hours
+    if (tokenAge > tokenMaxAge) {
+      res.status(400).json({
+        success: false,
+        error: 'Verification token has expired',
+      });
+      return;
+    }
+
+    // Mark email as verified and clear token
+    const verifiedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerified: true,
+        emailVerificationToken: null,
+        emailVerificationSentAt: null,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully',
+      user: {
+        id: verifiedUser.id,
+        email: verifiedUser.email,
+        name: verifiedUser.name,
+        emailVerified: true,
+      },
+    });
+  } catch (error) {
+    console.error('Email verification error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Email verification failed',
     });
   }
 });

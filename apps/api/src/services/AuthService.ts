@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt, { JwtPayload } from 'jsonwebtoken';
+import crypto from 'crypto';
 
 export interface TokenPayload extends JwtPayload {
   userId: string;
@@ -127,6 +128,20 @@ export class AuthService {
       valid: errors.length === 0,
       errors,
     };
+  }
+
+  /**
+   * Generate an email verification token
+   */
+  generateEmailVerificationToken(): string {
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  /**
+   * Create a verification link for email confirmation
+   */
+  getVerificationLink(token: string, baseUrl: string = 'http://localhost:3000'): string {
+    return `${baseUrl}/verify-email?token=${token}`;
   }
 }
 

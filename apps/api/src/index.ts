@@ -44,9 +44,14 @@ app.use(handleAuthError);
 // Generic error handling middleware
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
-  res.status(err.status || 500).json({
+  const isProduction = process.env.NODE_ENV === 'production';
+  const statusCode = err.status || 500;
+  const errorMessage = isProduction ? 'Internal server error' : (err.message || 'Internal server error');
+
+  res.status(statusCode).json({
     success: false,
-    error: err.message || 'Internal server error',
+    error: errorMessage,
+    ...(process.env.NODE_ENV === 'development' && { details: err.stack }),
   });
 });
 
